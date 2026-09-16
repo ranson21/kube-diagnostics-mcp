@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: order-service
+---
+# FAULT (security/over-privileged-rbac): a workload ServiceAccount bound cluster-wide to every verb
+# on Secrets. Anyone who compromises order-service can read every secret in the cluster.
+# FIX: delete the ClusterRole/ClusterRoleBinding; the app needs no Kubernetes API access at all.
+# (If it did: a namespaced Role with get on the one named Secret.)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: faultlab-order-service-secrets
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: faultlab-order-service-secrets
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: faultlab-order-service-secrets
+subjects:
+  - kind: ServiceAccount
+    name: order-service
+    namespace: faultlab
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: order-service
+      # FAULT (security/token-automount): automountServiceAccountToken is left at its default (true),
+      # so the over-privileged token above is mounted into the container.
+      # FIX: automountServiceAccountToken: false
+      # FAULT (security/runs-as-root): no pod/container securityContext and the image has no USER,
+      # so the JVM runs as uid 0.
+      # FIX:
+      # securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: order-service
+          # FAULT (config/latest-tag): mutable ":latest" tag; rollouts are not reproducible and
+          # "what changed" cannot be answered from the image ref.
+          # FIX: image: faultlab/order-service:dev (or a digest)
+          image: faultlab/order-service:latest
+          imagePullPolicy: IfNotPresent   # required for kind-loaded images; ":latest" would default to Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: DB_NAME
+              value: faultlab
+            - name: DB_USER
+              value: faultlab
+            # FAULT (security/secret-in-env): the password is pasted as a plain literal (visible in
+            # `kubectl get deploy -o yaml`, git history and /actuator/env) even though the Secret
+            # exists and is referenced right below it (the later entry wins in Spring's env lookup,
+            # so the app still works).
+            # FIX: delete the literal; keep only the secretKeyRef.
+            - name: DB_PASSWORD
+              value: faultlab-dev-password
+            - name: DB_PASSWORD_FROM_SECRET
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_PASSWORD } }
+            # Part of the memory-leak fault: heap is allowed ~90% of the container limit, leaving no
+            # headroom for metaspace/threads, so the leak ends in an OOMKill (exit 137) rather than a
+            # java.lang.OutOfMemoryError.
+            # FIX: -XX:MaxRAMPercentage=60.0 and remove the leak in OrderController.adminReport().
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=90.0"
+          # FAULT (config/no-requests + pod/oom-kill): no resources.requests at all (BestEffort QoS
+          # w.r.t. CPU, scheduler places it blind) and a 256Mi memory limit that the /admin/report
+          # leak reaches after roughly 60-100 calls -> OOMKilled (exit 137), restart count climbs.
+          # FIX: requests: { cpu: 250m, memory: 512Mi }, limits: { memory: 512Mi } and fix the leak.
+          resources:
+            limits:
+              memory: 256Mi
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+            failureThreshold: 3

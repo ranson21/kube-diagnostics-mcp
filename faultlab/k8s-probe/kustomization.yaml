@@ -1,0 +1,19 @@
+# Fault lab + kube-diagnostics probe sidecars. This overlay is what `make deploy` applies by
+# default; `kubectl apply -k faultlab/k8s` gives you the lab without any probes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: faultlab
+resources:
+  - ../k8s
+  - probe-token.yaml
+patches:
+  - path: probe-java.yaml
+    target: { kind: Deployment, name: catalog-service }
+  - path: probe-java.yaml
+    target: { kind: Deployment, name: order-service }
+  - path: probe-proxy.yaml
+    target: { kind: Deployment, name: proxy }
+images:
+  - name: ghcr.io/ranson21/kube-diagnostics-mcp
+    newName: kube-diagnostics-mcp
+    newTag: dev

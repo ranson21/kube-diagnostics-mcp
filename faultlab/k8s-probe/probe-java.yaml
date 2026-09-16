@@ -1,0 +1,43 @@
+# Native sidecar probe for a Spring Boot pod: reads Actuator on localhost, /proc/net, and (with
+# shareProcessNamespace) the JVM process. No Kubernetes credentials.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: placeholder
+spec:
+  template:
+    spec:
+      shareProcessNamespace: true
+      initContainers:
+        - name: diag-probe
+          image: ghcr.io/ranson21/kube-diagnostics-mcp:0.1.0
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          env:
+            - { name: DIAG_MODE, value: probe }
+            - { name: DIAG_PROBE_PORT, value: "9911" }
+            - { name: DIAG_PROBE_TOKEN_FILE, value: /var/run/kube-diagnostics/probe-token }
+            - name: DIAG_POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: DIAG_POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: DIAG_ALLOW_ACTIVE_CHECKS, value: "true" }
+            - { name: DIAG_PROBE_ACTUATOR_URL, value: "http://127.0.0.1:8080/actuator" }
+          ports:
+            - { name: probe, containerPort: 9911 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: probe }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: probe-token, mountPath: /var/run/kube-diagnostics, readOnly: true }
+      volumes:
+        - name: probe-token
+          secret: { secretName: kube-diagnostics-probe-token }

@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:faultlab}
+    username: ${DB_USER:faultlab}
+    password: ${DB_PASSWORD:faultlab}
+    hikari:
+      maximum-pool-size: 2      # FAULT (performance/pool-exhaustion): far too small; see CheckoutService. Fix: 10+
+      connection-timeout: 3000  # ms to wait for a free connection; the 3rd concurrent checkout fails with HTTP 500
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  sql:
+    init:
+      mode: always
+      continue-on-error: false
+
+server:
+  port: 8080
+  shutdown: graceful
+
+management:
+  server:
+    port: 8080        # management on the same port as the app
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus,threaddump,env,info,loggers
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  info:
+    env:
+      enabled: true
+    java:
+      enabled: true
+
+info:
+  app:
+    name: order-service
+    faultlab: true
+
+logging:
+  structured:
+    format:
+      console: ecs   # single-line JSON incl. MDC fields (traceId)

@@ -1,0 +1,52 @@
+# Strategic-merge patch: add the probe as a NATIVE sidecar (init container with
+# restartPolicy: Always, Kubernetes >= 1.29) to any Deployment/StatefulSet.
+#   kubectl patch deployment my-svc --patch-file deploy/probe/sidecar-patch.yaml
+# or reference it from a kustomization `patches:` entry with a target.
+#
+# The probe has NO Kubernetes credentials. It reads /proc/net (shared network
+# namespace), optionally Actuator/nginx on localhost, and serves the hub on
+# port 9911 with the shared probe token. Every knob below is optional.
+spec:
+  template:
+    spec:
+      # Optional: lets get_process_stats see the application's process.
+      # shareProcessNamespace: true
+      initContainers:
+        - name: diag-probe
+          image: ghcr.io/ranson21/kube-diagnostics-mcp:0.1.0
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          env:
+            - { name: DIAG_MODE, value: probe }
+            - { name: DIAG_PROBE_PORT, value: "9911" }
+            - { name: DIAG_PROBE_TOKEN_FILE, value: /var/run/kube-diagnostics/probe-token }
+            - name: DIAG_POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: DIAG_POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: DIAG_ALLOW_ACTIVE_CHECKS, value: "false" }
+            # Spring Boot: Actuator on localhost (does not need to be exposed via the Service)
+            - { name: DIAG_PROBE_ACTUATOR_URL, value: "http://127.0.0.1:8080/actuator" }
+            # nginx: stub_status + static dir + access log (mount the same volumes)
+            # - { name: DIAG_PROBE_NGINX_STATUS_URL, value: "http://127.0.0.1:8081/stub_status" }
+            # - { name: DIAG_PROBE_STATIC_DIR, value: "/usr/share/nginx/html" }
+            # - { name: DIAG_PROBE_ACCESS_LOG_PATH, value: "/var/log/nginx/access.json" }
+            # - { name: DIAG_PROBE_RUM_ENABLED, value: "true" }
+          ports:
+            - { name: probe, containerPort: 9911 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: probe }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: probe-token, mountPath: /var/run/kube-diagnostics, readOnly: true }
+      volumes:
+        - name: probe-token
+          secret: { secretName: kube-diagnostics-probe-token }

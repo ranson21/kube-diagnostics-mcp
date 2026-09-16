@@ -1,0 +1,23 @@
+# FAULT (security/no-tls): plaintext-only Ingress for faultlab.local (no `tls:` section, no
+# redirect annotation). kind ships no ingress controller, so this object is inert but still
+# visible to `kubectl get ingress`.
+# FIX:
+# spec.tls:
+#   - hosts: [faultlab.local]
+#     secretName: faultlab-tls
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: faultlab
+spec:
+  rules:
+    - host: faultlab.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: proxy
+                port:
+                  name: http

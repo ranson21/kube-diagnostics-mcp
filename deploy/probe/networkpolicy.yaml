@@ -1,0 +1,18 @@
+# Apply in every namespace that runs probes: only the hub may reach port 9911.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-diagnostics-probe-ingress
+spec:
+  podSelector: {}   # all pods; the rule only concerns port 9911
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-diagnostics }
+          podSelector:
+            matchLabels: { app: kube-diagnostics-hub }
+      ports: [{ port: 9911 }]
+    # NOTE: a podSelector: {} ingress policy makes the namespace default-deny for
+    # every other port. Add your own allow rules alongside this, or scope the
+    # podSelector to the workloads that carry the probe.

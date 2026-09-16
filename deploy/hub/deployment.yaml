@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kube-diagnostics-tokens
+  namespace: kube-diagnostics
+type: Opaque
+stringData:
+  # REPLACE both before applying (e.g. openssl rand -hex 32). The hub token is what
+  # MCP clients present; the probe token is shared between the hub and every probe.
+  hub-token: REPLACE_WITH_RANDOM_HUB_TOKEN
+  probe-token: REPLACE_WITH_RANDOM_PROBE_TOKEN
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-diagnostics-hub
+  namespace: kube-diagnostics
+  labels: { app: kube-diagnostics-hub }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kube-diagnostics-hub }
+  template:
+    metadata:
+      labels: { app: kube-diagnostics-hub }
+    spec:
+      serviceAccountName: kube-diagnostics-hub
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: hub
+          image: ghcr.io/ranson21/kube-diagnostics-mcp:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: DIAG_MODE, value: hub }
+            - { name: DIAG_TRANSPORT, value: http }
+            - { name: DIAG_HTTP_PORT, value: "8090" }
+            # Tokens are mounted as files (not env) so they never appear in the pod spec or /proc.
+            - { name: DIAG_HTTP_TOKEN_FILE, value: /var/run/kube-diagnostics/hub-token }
+            - { name: DIAG_PROBE_TOKEN_FILE, value: /var/run/kube-diagnostics/probe-token }
+            # Restrict what the hub may look at (comma-separated). Empty = everything RBAC allows.
+            - { name: DIAG_NAMESPACES, value: "" }
+            - { name: DIAG_DEFAULT_NAMESPACE, value: "" }
+            # Active checks (DNS/TCP/HTTP from the probe or hub) are off by default.
+            - { name: DIAG_ALLOW_ACTIVE_CHECKS, value: "false" }
+            # Optional providers:
+            # - { name: DIAG_PROMETHEUS_URL, value: "http://prometheus-operated.monitoring:9090" }
+            - { name: DIAG_LOG_LEVEL, value: info }
+          ports:
+            - { name: http, containerPort: 8090 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tokens, mountPath: /var/run/kube-diagnostics, readOnly: true }
+      volumes:
+        - name: tokens
+          secret: { secretName: kube-diagnostics-tokens }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-diagnostics-hub
+  namespace: kube-diagnostics
+spec:
+  selector: { app: kube-diagnostics-hub }
+  ports:
+    - { name: http, port: 8090, targetPort: http }
+---
+# Only the hub may talk to probes (port 9911); the hub accepts MCP traffic on 8090
+# from wherever you choose to expose it (adjust the ingress rule to your client).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-diagnostics-hub
+  namespace: kube-diagnostics
+spec:
+  podSelector:
+    matchLabels: { app: kube-diagnostics-hub }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 8090 }]

@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: faultlab
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - catalog-service.yaml
+  - order-service.yaml
+  - reviews-service.yaml
+  - proxy.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+configMapGenerator:
+  - name: proxy-nginx-conf
+    files:
+      - nginx.conf
+  - name: postgres-init
+    files:
+      - init-db.sh
+generatorOptions:
+  disableNameSuffixHash: true
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: faultlab
+    includeSelectors: false
+    includeTemplates: true

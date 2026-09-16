@@ -1,0 +1,63 @@
+# Read-only RBAC for the hub. Deliberately:
+#   - no "secrets" at all (secret usage is derived from pod specs)
+#   - no pods/exec, pods/attach, pods/portforward
+#   - verbs get/list/watch only
+# Use the ClusterRole for cluster-wide diagnostics, or bind it with a
+# RoleBinding per namespace to scope it (and set DIAG_NAMESPACES accordingly).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-diagnostics
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-diagnostics-hub
+  namespace: kube-diagnostics
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-diagnostics-readonly
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes", "pods", "pods/log", "services", "endpoints", "events", "configmaps", "serviceaccounts", "resourcequotas", "limitranges", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies", "ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-diagnostics-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-diagnostics-readonly
+subjects:
+  - kind: ServiceAccount
+    name: kube-diagnostics-hub
+    namespace: kube-diagnostics

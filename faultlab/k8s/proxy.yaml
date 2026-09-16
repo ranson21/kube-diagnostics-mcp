@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy
+  labels:
+    app: proxy
+spec:
+  # NodePort so the kind host can reach it: kind-config.yaml maps host 30080 -> nodePort 30080,
+  # i.e. http://localhost:30080/
+  type: NodePort
+  selector:
+    app: proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+  labels:
+    app: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: nginx
+          image: faultlab/proxy:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+            # 8081 (stub_status) is bound to 127.0.0.1 only; a sidecar sharing the network
+            # namespace can read http://127.0.0.1:8081/stub_status.
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            periodSeconds: 10
+          # FAULT (pod/liveness-wrong-path -> slow restart loop): nginx's health endpoint is
+          # /nginx-health, but the probe still points at the old /healthz path, which returns 404.
+          # periodSeconds 30 x failureThreshold 10 = ~5 minutes between restarts, so the lab stays
+          # usable while `kubectl get pods` shows RESTARTS climbing and events show
+          # "Liveness probe failed: HTTP probe failed with statuscode: 404".
+          # FIX: path: /nginx-health, periodSeconds: 10, failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 10
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: proxy-nginx-conf

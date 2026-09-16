@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: faultlab
+  labels:
+    # FAULT (security/pod-security): no pod-security.kubernetes.io/enforce label, so root
+    # containers and missing securityContexts are accepted silently.
+    # FIX: pod-security.kubernetes.io/enforce: baseline
+    faultlab.dev/lab: "true"

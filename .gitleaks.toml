@@ -1,0 +1,14 @@
+title = "kube-diagnostics-mcp gitleaks config"
+
+[extend]
+useDefault = true
+
+# tests/ and faultlab/ intentionally contain fake, obviously-placeholder
+# credential- and PII-shaped strings used to verify that the redaction and
+# sensitive-data scanning layers actually catch them. They are not real secrets.
+[allowlist]
+description = "Fake credential/PII fixtures used to test redaction and scanning"
+paths = [
+  '''tests/.*''',
+  '''faultlab/.*''',
+]

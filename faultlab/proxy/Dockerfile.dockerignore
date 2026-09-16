@@ -1,0 +1,7 @@
+# BuildKit uses this instead of the repo-root .dockerignore for faultlab/proxy/Dockerfile.
+**/node_modules
+**/dist
+**/.angular
+**/target
+.git
+faultlab/angular-app/public/assets/hero-large.png

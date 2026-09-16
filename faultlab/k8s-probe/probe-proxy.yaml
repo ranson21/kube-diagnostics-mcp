@@ -1,0 +1,62 @@
+# Native sidecar probe for the nginx pod: stub_status, the access log (shared emptyDir), the
+# served static build (copied to a shared emptyDir by an init container so the probe can stat
+# it), and RUM ingest for the Angular app (nginx proxies /__rum to 127.0.0.1:9911).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: copy-static
+          image: faultlab/proxy:dev
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cp -r /usr/share/nginx/html/. /static/"]
+          volumeMounts:
+            - { name: static-copy, mountPath: /static }
+        - name: diag-probe
+          image: ghcr.io/ranson21/kube-diagnostics-mcp:0.1.0
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          env:
+            - { name: DIAG_MODE, value: probe }
+            - { name: DIAG_PROBE_PORT, value: "9911" }
+            - { name: DIAG_PROBE_TOKEN_FILE, value: /var/run/kube-diagnostics/probe-token }
+            - name: DIAG_POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: DIAG_POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: DIAG_ALLOW_ACTIVE_CHECKS, value: "true" }
+            - { name: DIAG_PROBE_NGINX_STATUS_URL, value: "http://127.0.0.1:8081/stub_status" }
+            - { name: DIAG_PROBE_STATIC_DIR, value: "/static" }
+            - { name: DIAG_PROBE_ACCESS_LOG_PATH, value: "/var/log/nginx/access.json" }
+            - { name: DIAG_PROBE_RUM_ENABLED, value: "true" }
+          ports:
+            - { name: probe, containerPort: 9911 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: probe }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: static-copy, mountPath: /static, readOnly: true }
+            - { name: nginx-logs, mountPath: /var/log/nginx, readOnly: true }
+            - { name: probe-token, mountPath: /var/run/kube-diagnostics, readOnly: true }
+      containers:
+        - name: nginx
+          volumeMounts:
+            - { name: nginx-logs, mountPath: /var/log/nginx }
+      volumes:
+        - name: probe-token
+          secret: { secretName: kube-diagnostics-probe-token }
+        - name: static-copy
+          emptyDir: {}
+        - name: nginx-logs
+          emptyDir: { sizeLimit: 256Mi }

@@ -1,0 +1,9 @@
+# Template: `make -C faultlab probe-token` copies this to probe-token.yaml (git-ignored) with a real value.
+# The value must equal the hub's probe-token (deploy/hub/deployment.yaml).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kube-diagnostics-probe-token
+type: Opaque
+stringData:
+  probe-token: REPLACE_WITH_RANDOM_PROBE_TOKEN

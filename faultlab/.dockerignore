@@ -1,0 +1,5 @@
+angular-app/node_modules
+angular-app/dist
+angular-app/.angular
+**/target
+README.md

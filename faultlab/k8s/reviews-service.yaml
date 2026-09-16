@@ -1,0 +1,17 @@
+# FAULT (network/zero-endpoints): the selector matches no pod (the reviews endpoint actually lives
+# in catalog-service), so `kubectl get endpoints reviews-service` is empty and any caller gets
+# connection refused / no route.
+# FIX: selector: { app: catalog-service } (or delete this Service).
+apiVersion: v1
+kind: Service
+metadata:
+  name: reviews-service
+  labels:
+    app: reviews-service
+spec:
+  selector:
+    app: reviews-servcie   # typo is the fault
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

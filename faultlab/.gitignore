@@ -1,0 +1,6 @@
+angular-app/node_modules/
+angular-app/dist/
+angular-app/.angular/
+angular-app/public/assets/hero-large.png
+*/target/
+k8s-probe/probe-token.yaml

@@ -1,0 +1,39 @@
+{
+  "name": "kube-diagnostics-mcp",
+  "version": "0.1.0",
+  "description": "Read-only MCP diagnostics service for microservices on Kubernetes: a hub that encodes the debugging runbook as tools, plus an optional in-pod probe sidecar. The LLM never sees a cluster credential.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "ranson21",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ranson21/kube-diagnostics-mcp.git"
+  },
+  "bin": {
+    "kube-diagnostics-mcp": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "dev:hub": "DIAG_MODE=hub tsx src/index.ts",
+    "dev:probe": "DIAG_MODE=probe tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^5.0.0"
+  }
+}

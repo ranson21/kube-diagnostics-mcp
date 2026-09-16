@@ -1,0 +1,11 @@
+# kind create cluster --name kube-diag --config faultlab/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kube-diag
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # proxy Service (NodePort 30080) -> http://localhost:30080/
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP

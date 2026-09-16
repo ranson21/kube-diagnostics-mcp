@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  labels:
+    app: catalog-service
+spec:
+  selector:
+    app: catalog-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  labels:
+    app: catalog-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalog-service
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: "8080"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: catalog-service
+          image: faultlab/catalog-service:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_DB } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_PASSWORD } }
+            # FAULT (config/heap-vs-limit-mismatch): the JVM may grow its heap to 900 MiB but the
+            # container is limited to 512 MiB, so the kernel OOM-kills the pod before the JVM ever
+            # sees an OutOfMemoryError (and before GC gets aggressive).
+            # FIX: -XX:MaxRAMPercentage=75.0 (or -Xmx384m) so heap + metaspace + threads fit in 512Mi.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xmx900m"
+          resources:
+            # FAULT (performance/cpu-throttling): 100m limit on a JVM. Startup takes 1-3 minutes and
+            # container_cpu_cfs_throttled_periods_total climbs under any load; p99 latency balloons.
+            # FIX: cpu limit 1000m (or drop the CPU limit entirely and keep only the request), request 250m.
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 100m
+              memory: 512Mi
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 60      # up to 5 min because of the CPU limit above
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+            failureThreshold: 3

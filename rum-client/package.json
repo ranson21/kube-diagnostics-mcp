@@ -1,0 +1,21 @@
+{
+  "name": "@kube-diagnostics/rum-client",
+  "version": "0.1.0",
+  "description": "Tiny, privacy-first real-user-monitoring beacon for Angular (or any SPA) that reports to a kube-diagnostics-mcp probe. No cookies, no user ids, no query strings.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "web-vitals": "^4.0.0 || ^5.0.0 || ^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "web-vitals": "^6.0.0"
+  }
+}
