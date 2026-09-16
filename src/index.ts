@@ -19,11 +19,11 @@ function buildContext(config: HubConfig, logger: ReturnType<typeof createLogger>
   const k8s = new ReadOnlyKubeClient(kc, { namespaces: config.namespaces, timeoutMs: config.k8sTimeoutMs });
   const probe = new ProbeClient(config);
   const providers: SignalProvider[] = [];
-  // Priority: Prometheus (windowed, cheap) before native (probe fan-out).
+  // Priority: windowed metric backends (Prometheus, Datadog) first, Splunk next, native (probe fan-out) last.
   if (config.providers.prometheusUrl) providers.push(new PrometheusProvider({ baseUrl: config.providers.prometheusUrl, httpMetric: process.env.DIAG_PROM_HTTP_METRIC, serviceLabel: process.env.DIAG_PROM_SERVICE_LABEL }));
-  providers.push(new NativeProvider(k8s, probe, config.probeContainerName, { lines: config.logMaxLines, bytes: config.logMaxBytes }));
   if (config.providers.datadog) providers.push(new DatadogProvider(config.providers.datadog));
   if (config.providers.splunk) providers.push(new SplunkProvider(config.providers.splunk));
+  providers.push(new NativeProvider(k8s, probe, config.probeContainerName, { lines: config.logMaxLines, bytes: config.logMaxBytes }));
   return { k8s, probe, providers: new ProviderRegistry(providers), config, logger };
 }
 

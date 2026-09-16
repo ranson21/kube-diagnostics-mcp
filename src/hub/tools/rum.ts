@@ -93,7 +93,11 @@ export function mergeSummaries(list: RumSummary[]): RumSummary {
 async function collect(ctx: ToolContext, args: { namespace?: string; service?: string; route?: string }) {
   const ns = nsOf(ctx, args.namespace);
   const pods = await rumPods(ctx, ns, args.service);
-  if (!pods.length) return { ns, pods: 0, summary: undefined as RumSummary | undefined, note: "no pods with a RUM-enabled probe found. Add the probe to the proxy pod with DIAG_PROBE_RUM_ENABLED=true, route /__rum to it, and include rum-client in the Angular app." };
+  if (!pods.length) {
+    const r = await ctx.providers.first("webVitals", (p) => p.webVitals!({ namespace: ns, service: args.service ?? "*", windowSeconds: 24 * 3600 }, args.route) as Promise<RumSummary | undefined>);
+    if (r.result) return { ns, pods: 0, summary: r.result, note: `RUM data from provider ${r.provider}` };
+    return { ns, pods: 0, summary: undefined as RumSummary | undefined, note: `no pods with a RUM-enabled probe found${r.tried.length ? ` and provider(s) ${r.tried.join(", ")} returned nothing${r.errors.length ? ` (${r.errors.join("; ")})` : ""}` : ""}. Add the probe to the proxy pod with DIAG_PROBE_RUM_ENABLED=true, route /__rum to it, and include rum-client in the Angular app - or configure Datadog RUM.` };
+  }
   const summaries: RumSummary[] = [];
   const errors: string[] = [];
   for (const p of pods.slice(0, 10)) {

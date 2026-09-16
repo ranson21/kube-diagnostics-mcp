@@ -8,10 +8,46 @@ export class ConfigError extends Error {}
 export interface ProviderConfig {
   /** Optional Prometheus-compatible HTTP API base URL (e.g. http://prometheus.monitoring:9090). */
   prometheusUrl?: string;
-  /** Datadog: recognized now, provider implemented later (see src/providers/datadog). */
-  datadog?: { site: string; apiKey: string; appKey: string };
-  /** Splunk: recognized now, provider implemented later (see src/providers/splunk). */
-  splunk?: { url: string; token: string; index?: string };
+  /** Datadog (see src/providers/datadog). Keys never leave the hub. */
+  datadog?: DatadogConfig;
+  /** Splunk Enterprise/Cloud REST (see src/providers/splunk). */
+  splunk?: SplunkConfig;
+}
+
+export interface DatadogConfig {
+  site: string;
+  apiKey: string;
+  appKey: string;
+  /** Extra tag scope added to every query, e.g. "env:prod" or "env:prod,kube_cluster_name:blue". */
+  scope?: string;
+  /** APM span name whose trace metrics carry request rate/errors/latency. Java/Spring: servlet.request. */
+  apmOperation: string;
+  /** Tag that identifies the service in APM/metrics (default: service). */
+  serviceTag: string;
+  /** Tag carrying the Kubernetes namespace on infra metrics (default: kube_namespace). */
+  namespaceTag: string;
+  /** RUM application name/id filter, if you have several (adds @application.name:<x> or @application.id:<x>). */
+  rumApplication?: string;
+  /** Log indexes to search (default: all). */
+  logIndexes: string[];
+  timeoutMs: number;
+}
+
+export interface SplunkConfig {
+  url: string;
+  token: string;
+  /** "Bearer" for authentication tokens (default), "Splunk" for session keys. */
+  authScheme: "Bearer" | "Splunk";
+  index?: string;
+  /** Field names used by your Kubernetes log collector. */
+  namespaceField: string;
+  serviceField: string;
+  /** Sourcetype/source filter for the proxy's structured request logs (golden signals via SPL). */
+  requestLogSearch?: string;
+  /** Field names inside those request logs. */
+  requestFields: { status: string; durationSeconds: string; path: string; method: string };
+  verifyTls: boolean;
+  timeoutMs: number;
 }
 
 export interface HubConfig {
@@ -112,18 +148,47 @@ function parseProviders(env: NodeJS.ProcessEnv): ProviderConfig {
   const prom = optional(env.DIAG_PROMETHEUS_URL);
   if (prom) out.prometheusUrl = prom.replace(/\/+$/, "");
 
-  const ddApi = optional(env.DIAG_DATADOG_API_KEY);
-  const ddApp = optional(env.DIAG_DATADOG_APP_KEY);
+  const ddApi = secret(env, "DIAG_DATADOG_API_KEY");
+  const ddApp = secret(env, "DIAG_DATADOG_APP_KEY");
   if (ddApi || ddApp) {
-    if (!ddApi || !ddApp) throw new ConfigError("DIAG_DATADOG_API_KEY and DIAG_DATADOG_APP_KEY must be set together.");
-    out.datadog = { site: optional(env.DIAG_DATADOG_SITE) ?? "datadoghq.com", apiKey: ddApi, appKey: ddApp };
+    if (!ddApi || !ddApp) throw new ConfigError("DIAG_DATADOG_API_KEY and DIAG_DATADOG_APP_KEY must be set together (or their _FILE variants).");
+    out.datadog = {
+      site: optional(env.DIAG_DATADOG_SITE) ?? "datadoghq.com",
+      apiKey: ddApi,
+      appKey: ddApp,
+      scope: optional(env.DIAG_DATADOG_SCOPE),
+      apmOperation: optional(env.DIAG_DATADOG_APM_OPERATION) ?? "servlet.request",
+      serviceTag: optional(env.DIAG_DATADOG_SERVICE_TAG) ?? "service",
+      namespaceTag: optional(env.DIAG_DATADOG_NAMESPACE_TAG) ?? "kube_namespace",
+      rumApplication: optional(env.DIAG_DATADOG_RUM_APPLICATION),
+      logIndexes: parseList(env.DIAG_DATADOG_LOG_INDEXES),
+      timeoutMs: parsePositiveInt("DIAG_DATADOG_TIMEOUT_MS", env.DIAG_DATADOG_TIMEOUT_MS, 15000),
+    };
   }
 
   const splunkUrl = optional(env.DIAG_SPLUNK_URL);
-  const splunkToken = optional(env.DIAG_SPLUNK_TOKEN);
+  const splunkToken = secret(env, "DIAG_SPLUNK_TOKEN");
   if (splunkUrl || splunkToken) {
-    if (!splunkUrl || !splunkToken) throw new ConfigError("DIAG_SPLUNK_URL and DIAG_SPLUNK_TOKEN must be set together.");
-    out.splunk = { url: splunkUrl.replace(/\/+$/, ""), token: splunkToken, index: optional(env.DIAG_SPLUNK_INDEX) };
+    if (!splunkUrl || !splunkToken) throw new ConfigError("DIAG_SPLUNK_URL and DIAG_SPLUNK_TOKEN must be set together (or DIAG_SPLUNK_TOKEN_FILE).");
+    const scheme = (optional(env.DIAG_SPLUNK_AUTH_SCHEME) ?? "Bearer").toLowerCase();
+    if (scheme !== "bearer" && scheme !== "splunk") throw new ConfigError('DIAG_SPLUNK_AUTH_SCHEME must be "Bearer" or "Splunk".');
+    out.splunk = {
+      url: splunkUrl.replace(/\/+$/, ""),
+      token: splunkToken,
+      authScheme: scheme === "splunk" ? "Splunk" : "Bearer",
+      index: optional(env.DIAG_SPLUNK_INDEX),
+      namespaceField: optional(env.DIAG_SPLUNK_NAMESPACE_FIELD) ?? "namespace",
+      serviceField: optional(env.DIAG_SPLUNK_SERVICE_FIELD) ?? "container_name",
+      requestLogSearch: optional(env.DIAG_SPLUNK_REQUEST_LOG_SEARCH),
+      requestFields: {
+        status: optional(env.DIAG_SPLUNK_REQUEST_STATUS_FIELD) ?? "status",
+        durationSeconds: optional(env.DIAG_SPLUNK_REQUEST_DURATION_FIELD) ?? "request_time",
+        path: optional(env.DIAG_SPLUNK_REQUEST_PATH_FIELD) ?? "uri",
+        method: optional(env.DIAG_SPLUNK_REQUEST_METHOD_FIELD) ?? "request_method",
+      },
+      verifyTls: parseBool(env.DIAG_SPLUNK_VERIFY_TLS, true),
+      timeoutMs: parsePositiveInt("DIAG_SPLUNK_TIMEOUT_MS", env.DIAG_SPLUNK_TIMEOUT_MS, 30000),
+    };
   }
   return out;
 }

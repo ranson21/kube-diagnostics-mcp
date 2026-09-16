@@ -17,7 +17,7 @@ Claude Code / OpenCode / any MCP client
 ┌──────────────────────────────┐   read-only RBAC: get/list/watch, no Secrets, no exec
 │  HUB  (Deployment)           │──► Kubernetes API + metrics.k8s.io
 │  encodes the runbook         │──► Prometheus            (optional provider)
-│  ~55 tools, 4 runbooks       │──► Datadog / Splunk      (provider stubs, see below)
+│  ~55 tools, 4 runbooks       │──► Datadog / Splunk      (optional providers)
 └──────────┬───────────────────┘
            │ HTTP + shared token, restricted by NetworkPolicy
            ▼
@@ -31,9 +31,10 @@ Claude Code / OpenCode / any MCP client
 **Status:** v0.1.0. Everything documented below runs end to end against the included fault lab
 (kind + Angular/nginx + two Spring Boot services + Postgres with 29 injected faults); the CI
 workflow runs the unit tests, builds the image, renders the manifests, and scans for leaked
-secrets. Datadog and Splunk providers are interface placeholders; tracing tools return guidance
-until a tracing provider exists. The container image is published to GHCR by the release workflow
-on `v*` tags; until the first tag, build it locally.
+secrets. Datadog and Splunk providers are implemented against their documented REST APIs and
+enabled by env vars, but have not yet been run against a live org/instance (see the caveat under
+Signal providers). The container image is published to GHCR by the release workflow on `v*` tags;
+until the first tag, build it locally.
 
 ## Contents
 
@@ -243,7 +244,7 @@ timeline of rollouts, scaling, HPA actions, ConfigMap updates, restarts, notable
 `get_resource_pressure` (usage vs requests/limits, CFS throttling ratio via Prometheus, OOM kills),
 `compare_replicas` (hot pod, leak, stuck rollout, no node spread), `get_node_pressure`,
 `get_hpa_status`, `get_golden_signals`, `query_metrics` (raw PromQL, compacted),
-`find_slow_traces` and `get_trace` (need a tracing provider).
+`find_slow_traces` and `get_trace` (Datadog APM today; Tempo/Jaeger would be another provider).
 
 ### Connectivity
 
@@ -269,6 +270,63 @@ buffering, gzip, cache headers for hashed chunks vs `index.html`, security heade
 `[probe] get_static_bundle_stats`, `[ACTIVE] check_security_headers`.
 
 ### Real-user monitoring
+
+`[probe RUM] get_web_vitals` (p75/p95 per route with Google's good/needs-improvement/poor ratings),
+`get_page_views`, `get_page_load_breakdown` (Navigation Timing phases), `get_browser_api_latency`
+(browser-observed latency per API path, to compare with proxy and service numbers),
+`get_frontend_errors`.
+
+### Security
+
+`security_posture` (privileged, root, host namespaces, capabilities, seccomp, writable rootfs,
+secrets as env, unpinned images, no limits, SA token automount, missing NetworkPolicy, over-privileged
+RBAC; severities critical..info), `get_exposure` (LoadBalancer/NodePort, Ingress with/without TLS,
+management paths exposed), `get_rbac_for_workload`, `get_secret_usage` (names and keys only),
+`get_tls_status`, `scan_logs_for_sensitive_data`, `[probe] get_egress_destinations` (public
+internet and cloud-metadata destinations flagged), `get_image_inventory`.
+
+## Signal providers
+
+The runbooks need a few *signals*: resource usage, golden signals, log search, slow traces, web
+vitals. Where they come from is a deployment detail behind
+[`src/providers/types.ts`](src/providers/types.ts). The registry asks providers in priority order
+and reports which one answered.
+
+| Provider | Configured by | Provides |
+|---|---|---|
+| `native` | always | resource usage from metrics-server; golden signals from Micrometer via the probe (cumulative since JVM start, so p50 is the mean and p99 the max); log search from pod logs |
+| `prometheus` | `DIAG_PROMETHEUS_URL` | windowed golden signals (`http_server_requests_seconds`, configurable), cAdvisor usage and CFS throttling ratio, raw PromQL |
+| `datadog` | `DIAG_DATADOG_API_KEY` + `DIAG_DATADOG_APP_KEY` (or `_FILE` variants), `DIAG_DATADOG_SITE` | golden signals and per-resource breakdown from APM trace metrics (`trace.<op>.hits/.errors`, percentiles on the `trace.<op>` distribution); pod CPU/memory/throttling from `kubernetes.*`; slow traces and a trace's critical path from spans search; log search; web vitals, page views, and frontend errors from RUM view/error events; raw metric queries |
+| `splunk` | `DIAG_SPLUNK_URL` + `DIAG_SPLUNK_TOKEN` (or `_FILE`) | log search over your Kubernetes index via oneshot SPL; golden signals computed with `stats` over structured request logs when `DIAG_SPLUNK_REQUEST_LOG_SEARCH` names them (e.g. `sourcetype="nginx:json"`) |
+
+Providers are tried in order: Prometheus, Datadog, Splunk, native. Each tool result names the
+provider that answered. `list_providers` shows what is configured and whether it is reachable
+(Datadog: `/api/v1/validate`; Splunk: `/services/server/info`).
+
+**Datadog knobs.** `DIAG_DATADOG_SCOPE=env:prod` adds tags to every query. `DIAG_DATADOG_APM_OPERATION`
+is the span name whose trace metrics carry request rate and latency: `servlet.request` (default)
+for Java/Spring, `http.request` for most others. `DIAG_DATADOG_SERVICE_TAG` / `DIAG_DATADOG_NAMESPACE_TAG`
+default to `service` / `kube_namespace`. `DIAG_DATADOG_RUM_APPLICATION` filters RUM to one app.
+`DIAG_DATADOG_LOG_INDEXES` limits log search. Keys never leave the hub; the model sees only results.
+
+**Splunk knobs.** `DIAG_SPLUNK_INDEX`, `DIAG_SPLUNK_NAMESPACE_FIELD` / `DIAG_SPLUNK_SERVICE_FIELD`
+(defaults `namespace` / `container_name`, the Splunk Connect for Kubernetes names; OpenTelemetry
+collectors use `k8s.namespace.name` / `k8s.container.name`), `DIAG_SPLUNK_AUTH_SCHEME=Splunk` for a
+session key instead of an authentication token, `DIAG_SPLUNK_VERIFY_TLS=false` for a self-signed
+management port, and `DIAG_SPLUNK_REQUEST_*_FIELD` for the status/duration/path/method field names in
+your request logs (defaults match the fault lab's nginx JSON log). Splunk Observability Cloud
+(SignalFlow, APM) is a different API and is not implemented.
+
+**Caveat.** Both providers were written against the documented REST request/response shapes and are
+pinned by unit tests with a mocked HTTP layer, but they have not been exercised against a live
+Datadog org or Splunk instance from this environment. The first real run may need a tag or field
+name adjusted; every one of them is an env var. If you can reach the official
+[Datadog](https://docs.datadoghq.com/mcp_server/) or
+[Splunk](https://help.splunk.com/en/splunk-cloud-platform/mcp-server-for-splunk-platform) MCP
+servers, run them alongside this one for ad-hoc exploration; this server's providers exist so the
+*runbooks* can pull the few signals they need.
+
+## Real-user monitoring
 
 `[probe RUM] get_web_vitals` (p75/p95 per route with Google's good/needs-improvement/poor ratings),
 `get_page_views`, `get_page_load_breakdown` (Navigation Timing phases), `get_browser_api_latency`
@@ -321,8 +379,9 @@ else. Aggregates are kept in memory for `DIAG_PROBE_RUM_RETENTION_MINUTES` (defa
 exported as Prometheus metrics (`rum_web_vital`, `rum_page_views_total`,
 `rum_frontend_errors_total`, `rum_sessions`) for long-term retention.
 
-If you already run Datadog RUM, use it instead and let the (future) Datadog provider answer the
-same tools; this client exists because that path was not available.
+If you already run Datadog RUM, you do not need this client: when no probe has RUM data, the RUM
+tools fall back to the Datadog provider, which computes the same summaries from RUM view and error
+events (route grouping uses `@view.url_path_group`).
 
 ## The fault lab
 
@@ -393,7 +452,7 @@ All configuration is environment variables. See [`.env.example`](.env.example).
 | `DIAG_PROBE_TOKEN` | | shared hub↔probe token |
 | `DIAG_PROBE_TIMEOUT_MS` / `DIAG_K8S_TIMEOUT_MS` | `5000` / `15000` | call timeouts |
 | `DIAG_PROMETHEUS_URL`, `DIAG_PROM_HTTP_METRIC`, `DIAG_PROM_SERVICE_LABEL` | | Prometheus provider |
-| `DIAG_DATADOG_*`, `DIAG_SPLUNK_*` | | placeholder providers |
+| `DIAG_DATADOG_*`, `DIAG_SPLUNK_*` | | see [Signal providers](#signal-providers) |
 | `DIAG_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` (stderr only; stdout is the MCP stream in stdio mode) |
 | probe: `DIAG_PROBE_HOST`, `DIAG_PROBE_ACTUATOR_URL`, `DIAG_PROBE_NGINX_STATUS_URL`, `DIAG_PROBE_STATIC_DIR`, `DIAG_PROBE_ACCESS_LOG_PATH`, `DIAG_PROBE_RUM_ENABLED`, `DIAG_PROBE_RUM_MAX_BODY_BYTES` (8192), `DIAG_PROBE_RUM_RETENTION_MINUTES` (360), `DIAG_POD_NAME`, `DIAG_POD_NAMESPACE` | | see [The probe sidecar](#the-probe-sidecar) |
 
@@ -427,8 +486,8 @@ client), `src/providers/` (signal providers), `src/hub/tools/*` (one file per to
   skip that tool.
 - **No Secret contents, ever.** `get_tls_status` therefore cannot read certificates from Secrets; with
   active checks it performs a TLS handshake against a host you name instead.
-- **Tracing is provider-only.** `find_slow_traces`/`get_trace` return guidance until a Tempo, Jaeger,
-  or Datadog provider is implemented.
+- **Tracing is provider-only.** `find_slow_traces`/`get_trace` need Datadog APM (implemented) or a
+  future Tempo/Jaeger provider; without one they return guidance.
 - **Pattern matching has false positives.** The sensitive-data scanner labels confidence per kind and
   keeps the phone-number detector deliberately narrow.
 
