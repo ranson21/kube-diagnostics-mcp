@@ -79,8 +79,11 @@ export function redactText(input: string): string {
 export const SENSITIVE_KEY_PATTERN =
   /(^|[_\-.])(api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd|client[_-]?secret|token|authorization|credentials?|connection[_-]?string|database[_-]?url|jdbc[_-]?url|private[_-]?key|cert(ificate)?[_-]?key)($|[_\-.])/i;
 
+/** Keys that *reference* a secret rather than hold one (a file path, a Secret name, a flag). */
+const REFERENCE_KEY_SUFFIX = /(_|-)?(file|path|dir|mount|name|ref|enabled|header|prefix|length|ttl|expiry|expires|rotation)$/i;
+
 export function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEY_PATTERN.test(key);
+  return SENSITIVE_KEY_PATTERN.test(key) && !REFERENCE_KEY_SUFFIX.test(key);
 }
 
 /**

@@ -29,9 +29,11 @@ Claude Code / OpenCode / any MCP client
 ```
 
 **Status:** v0.1.0. Everything documented below runs end to end against the included fault lab
-(kind + Angular/nginx + two Spring Boot services + Postgres with 29 injected faults). Datadog and
-Splunk providers are interface placeholders; tracing tools return guidance until a tracing
-provider exists.
+(kind + Angular/nginx + two Spring Boot services + Postgres with 29 injected faults); the CI
+workflow runs the unit tests, builds the image, renders the manifests, and scans for leaked
+secrets. Datadog and Splunk providers are interface placeholders; tracing tools return guidance
+until a tracing provider exists. The container image is published to GHCR by the release workflow
+on `v*` tags; until the first tag, build it locally.
 
 ## Contents
 
@@ -337,13 +339,40 @@ source with `FAULT`/`FIX` comments.
 
 ```sh
 kind create cluster --config deploy/kind/kind-config.yaml
-make -C faultlab build load          # ~5 min cold: Maven and Angular build inside Docker
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl -n kube-system patch deploy metrics-server --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
+# hub + probes share one probe token; the hub token is what MCP clients present
+export HUB_TOKEN=$(openssl rand -hex 32) PROBE_TOKEN=$(openssl rand -hex 32)
 docker build -t kube-diagnostics-mcp:dev . && kind load docker-image --name kube-diag kube-diagnostics-mcp:dev
-make -C faultlab deploy              # applies faultlab/k8s-probe: the lab + probe sidecars + RUM
-open http://localhost:30080/         # click around to generate RUM data
+kubectl kustomize deploy/hub \
+  | sed -e "s/REPLACE_WITH_RANDOM_HUB_TOKEN/$HUB_TOKEN/" -e "s/REPLACE_WITH_RANDOM_PROBE_TOKEN/$PROBE_TOKEN/" \
+        -e "s|ghcr.io/ranson21/kube-diagnostics-mcp:0.1.0|kube-diagnostics-mcp:dev|" \
+  | kubectl apply -f -
+kubectl -n kube-diagnostics set env deploy/kube-diagnostics-hub DIAG_ALLOW_ACTIVE_CHECKS=true DIAG_DEFAULT_NAMESPACE=faultlab
+
+make -C faultlab build load          # ~5 min cold: Maven and Angular build inside Docker
+make -C faultlab deploy              # applies faultlab/k8s-probe: the lab + probe sidecars + RUM (uses $PROBE_TOKEN)
+open http://localhost:30080/         # click around to generate RUM data (in a visible window: hidden tabs never paint)
 make -C faultlab load-test DURATION=120
-npx tsx scripts/smoke.ts faultlab    # calls ~35 tools over stdio and prints compact results
+
+kubectl -n kube-diagnostics port-forward svc/kube-diagnostics-hub 8090:8090 &
+SMOKE_URL=http://localhost:8090/mcp SMOKE_TOKEN=$HUB_TOKEN npx tsx scripts/smoke.ts faultlab
 ```
+
+The smoke script calls 35 tools and prints compact results. It talks to the *in-cluster* hub because
+kind pod IPs are not routable from the host, and the probe-backed tools need to reach `podIP:9911`.
+Without `SMOKE_URL` it spawns a local stdio hub instead, which is fine for everything that only
+needs the API server.
+
+What the runbooks find in the lab, unprompted: HikariCP acquisition timeouts and 5-second
+connection holds on `order-service`; the `-Xmx900m` vs 512 MiB mismatch and a 1-CPU JVM on
+`catalog-service`; per-endpoint p95s for `/reviews` (N+1) and `/products/slow`; 504s per upstream at
+the proxy with `proxy_read_timeout 2s`; 16 card numbers and 16 emails in the catalog logs;
+`reviews-service` with zero endpoints; wildcard RBAC on Secrets for the order-service
+ServiceAccount; no NetworkPolicy; source maps and a 3 MiB hero image in the served build; poor LCP
+and CLS on `/products/:id` and poor INP on `/checkout` from RUM.
 
 ## Configuration reference
 

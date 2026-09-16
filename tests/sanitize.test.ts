@@ -43,5 +43,10 @@ describe("sanitizeDeep / isSensitiveKey", () => {
     expect(isSensitiveKey("DATABASE_URL")).toBe(true);
     expect(isSensitiveKey("JWT_SECRET")).toBe(true);
     expect(isSensitiveKey("LOG_LEVEL")).toBe(false);
+    // references to secrets are not secrets
+    expect(isSensitiveKey("DIAG_PROBE_TOKEN_FILE")).toBe(false);
+    expect(isSensitiveKey("TLS_SECRET_NAME")).toBe(false);
+    expect(isSensitiveKey("JWT_TOKEN_TTL")).toBe(false);
+    expect(isSensitiveKey("PASSWORD_ROTATION")).toBe(false);
   });
 });

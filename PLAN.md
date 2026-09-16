@@ -1,4 +1,9 @@
-# kube-diagnostics-mcp — Plan (v0, 2026-09-16, awaiting approval)
+# kube-diagnostics-mcp — Plan (v0, 2026-09-16)
+
+> **Status 2026-09-16:** approved and built. v0.1.0 is at https://github.com/ranson21/kube-diagnostics-mcp
+> (hub, probe, providers, RUM client, fault lab, CI). The Datadog/Splunk providers are placeholders
+> because those endpoints are not reachable yet; see README "Signal providers". This file is the
+> original design and is kept for the reasoning behind the shape of the tool set.
 
 Read-only MCP diagnostics service for microservices on Kubernetes. Goal: make
 "why is checkout slow?", "what changed?", "is anything leaking?" a conversation,
